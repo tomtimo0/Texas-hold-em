@@ -1,6 +1,6 @@
 /**
  * table.js — 扑克桌面渲染：玩家位置、公共牌、底池、动画。
- * 牌面素材：Chris Aguilar Vector Playing Cards (Public Domain)
+ * 牌面素材由 DeckSkin 注册表管理（见 deck.js）。
  */
 
 const Table = {
@@ -11,26 +11,9 @@ const Table = {
         this._renderPlayers(state);
     },
 
-    /**
-     * 将服务器牌串映射为 Aguilar SVG 路径。
-     * 服务器: "A♠", "T♥", "K♦", "2♣"  (T=10, Unicode花色)
-     * Aguilar: ace_of_spades.svg, 10_of_hearts.svg, king_of_hearts2.svg 等
-     */
+    /** @deprecated 请使用 DeckSkin.cardPath；保留供外部兼容调用 */
     _cardImgPath(cardStr) {
-        if (!cardStr || cardStr === '??') return null;
-        const AGUILAR = '/static/img/cards/aguilar';
-        const RANK = {'A':'ace','2':'2','3':'3','4':'4','5':'5','6':'6',
-                       '7':'7','8':'8','9':'9','T':'10',
-                       'J':'jack2','Q':'queen2','K':'king2'};
-        const SUIT = {'♠':'spades','♥':'hearts','♦':'diamonds','♣':'clubs',
-                      's':'spades','h':'hearts','d':'diamonds','c':'clubs'};
-        let rank = cardStr[0];
-        let suitChar = cardStr[cardStr.length - 1];
-        if (rank === '1' && cardStr.length >= 3) rank = '10';  // "10♠" 格式
-        const agRank = RANK[rank];
-        const agSuit = SUIT[suitChar];
-        if (!agRank || !agSuit) return null;
-        return `${AGUILAR}/${agRank}_of_${agSuit}.svg`;
+        return DeckSkin.cardPath(cardStr);
     },
 
     /** 渲染公共牌 */
@@ -54,7 +37,7 @@ const Table = {
         if (path) {
             el.innerHTML = `<img src="${path}" class="card-img" alt="${cardStr}">`;
         } else {
-            el.innerHTML = `<img src="/static/img/cards/aguilar/back.png" class="card-img" alt="?">`;
+            el.innerHTML = `<img src="${DeckSkin.backPath()}" class="card-img" alt="?">`;
         }
     },
 
@@ -82,8 +65,8 @@ const Table = {
         const tableRect = tableEl.getBoundingClientRect();
         const cx = tableRect.width / 2;
         const cy = tableRect.height / 2;
-        const rx = tableRect.width / 2 - 60;
-        const ry = tableRect.height / 2 - 50;
+        const rx = tableRect.width / 2 - 50;
+        const ry = tableRect.height / 2 - 80;
 
         // 按座位号映射到椭圆上的角度
         players.forEach((p, idx) => {
@@ -94,7 +77,15 @@ const Table = {
             const angle = (p.seat / totalSeats) * 2 * Math.PI - Math.PI / 2;
 
             const x = cx + rx * Math.cos(angle);
-            const y = cy + ry * Math.sin(angle);
+            let y = cy + ry * Math.sin(angle);
+
+            // 顶部/底部的玩家位置向内额外收缩，避免手牌超出桌面边缘
+            const threshold = Math.PI * 0.95 / 2; // ~85.5°
+            if (angle > Math.PI / 2 - threshold && angle < Math.PI / 2 + threshold) {
+                y -= 50; // 底部玩家上移
+            } else if (angle < -Math.PI / 2 + threshold && angle > -Math.PI / 2 - threshold) {
+                y += 15; // 顶部玩家微调下移
+            }
 
             const spot = document.createElement('div');
             spot.className = 'player-spot';
@@ -112,8 +103,8 @@ const Table = {
 
             // 玩家信息卡片
             let blindBadge = '';
-            if (p.is_small_blind) blindBadge += '<span class="blind-badge sb-badge">SB</span>';
-            if (p.is_big_blind) blindBadge += '<span class="blind-badge bb-badge">BB</span>';
+            if (p.is_small_blind) blindBadge += '<span class="blind-badge sb-badge" title="小盲注">SB</span>';
+            if (p.is_big_blind) blindBadge += '<span class="blind-badge bb-badge" title="大盲注">BB</span>';
 
             let dealerBtn = p.is_dealer ? '<span class="dealer-btn">D</span>' : '';
 
@@ -145,7 +136,7 @@ const Table = {
                     <div class="hole-cards-mini">
                         ${(p.hole_cards || []).map(c => {
                             const path = this._cardImgPath(c);
-                            if (!path) return '<div class="hole-card-mini hole-card-back"><img src="/static/img/cards/aguilar/back.png" class="card-img" alt="?"></div>';
+                            if (!path) return `<div class="hole-card-mini hole-card-back"><img src="${DeckSkin.backPath()}" class="card-img" alt="?"></div>`;
                             return `<div class="hole-card-mini"><img src="${path}" class="card-img" alt="${c}"></div>`;
                         }).join('')}
                     </div>

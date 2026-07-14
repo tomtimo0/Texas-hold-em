@@ -13,7 +13,8 @@ from flask_socketio import SocketIO
 from src.engine.game import Action, ActionType, BettingStructure, GameState
 from src.engine.hand import HandEvaluator
 from src.engine.player import Player
-from src.ai.bots import BotBase, BotFactory, BotStyle
+from src.ai.bots import BoltzmannBot, BotFactory, BotStyle
+from src.analysis.battle_analyzer import BattleAnalyzer
 from src.analysis.reporter import HandReporter
 from src.server.routes import set_game_manager
 
@@ -26,9 +27,10 @@ class GameManager:
 
     def __init__(self) -> None:
         self.game: Optional[GameState] = None
-        self.bots: Dict[str, BotBase] = {}
+        self.bots: Dict[str, Any] = {}
         self.human_player_name: str = ""
         self.reporter = HandReporter()
+        self.analyzer = BattleAnalyzer()
         self._lock = Lock()
         self._bot_running: bool = False
         self._bot_wake_event = Event()
@@ -63,8 +65,25 @@ class GameManager:
             ))
 
             # 机器人玩家
+            has_rlcard = any(BotStyle(cfg.get("style", "BALANCED")) == BotStyle.RLCARD for cfg in bot_configs)
+            if has_rlcard:
+                if len(bot_configs) != 1:
+                    raise ValueError(
+                        "RLCard Bot 仅支持单人对抗（1 人类 + 1 Bot）。"
+                        f"当前配置了 {len(bot_configs)} 个 Bot，请只保留 1 个。"
+                    )
+                eff_stack = starting_chips / big_blind
+                ref_stack = 100.0
+                deviation = abs(eff_stack - ref_stack) / ref_stack
+                if deviation > 0.20:
+                    print(
+                        f"[GameManager] ⚠ 有效筹码深度 {eff_stack:.0f} BB "
+                        f"与训练参考值 {ref_stack:.0f} BB 偏差 {deviation:.0%}，"
+                        f"RLCard Bot 决策质量可能下降"
+                    )
+
             for i, cfg in enumerate(bot_configs):
-                style_name = cfg.get("style", "TAG")
+                style_name = cfg.get("style", "BALANCED")
                 bot_name = cfg.get("name", f"Bot{i+1}")
                 style = BotStyle(style_name)
 
@@ -87,7 +106,12 @@ class GameManager:
                         seed=hash(bot_name) % 10000,
                     )
                 else:
-                    bot = BotFactory.create(style, name=bot_name, seed=hash(bot_name) % 10000)
+                    t = cfg.get("temperature")
+                    rl_cfg = cfg.get("rlcard_config")
+                    bot = BotFactory.create(style, name=bot_name,
+                                            seed=hash(bot_name) % 10000,
+                                            temperature=t,
+                                            rlcard_config=rl_cfg)
                 self.bots[bot_name] = bot
                 players.append(Player(
                     name=bot_name, chips=starting_chips, seat=i + 1,
@@ -353,6 +377,25 @@ class GameManager:
             state["to_call"] = self.game.current_bet - human.current_bet
         else:
             state["legal_actions"] = []
+        # 为人类玩家计算战局分析数据（仅当底牌可见时）
+        if human and human.hole_cards and human.hole_cards[0] is not None:
+            # 统计活跃对手（未弃牌、非人类、仍在游戏中）
+            active_opponents = sum(
+                1 for p in self.game.players
+                if not p.is_folded and p.name != human.name and p.status.value < 3
+            )
+            analysis = self.analyzer.analyze(
+                hole_cards=human.hole_cards,
+                community_cards=list(self.game.community_cards),
+                active_opponent_count=active_opponents,
+                game=self.game,
+                player=human,
+            )
+            state["hand_type_probs"] = analysis["hand_type_probs"]
+            state["ranking_distribution"] = analysis["ranking_distribution"]
+            state["odds_ev"] = analysis["odds_ev"]
+            state["pot_financials"] = analysis["pot_financials"]
+            state["sim_count"] = analysis["sim_count"]
         socketio.emit("game_update", state)
 
     def _emit_action_required(self, player_name: str) -> None:
@@ -381,6 +424,11 @@ class GameManager:
                     best_five = [c.short_str for c in result.best_five]
                     hand_description = result.description
                     sort_key = result.score  # 元组可比，越小牌力越强
+                else:
+                    # 不足 5 张牌（翻牌前/翻牌圈结束），直接展示已有底牌
+                    best_five = [c.short_str for c in p.hole_cards]
+                    hand_description = "未摊牌"
+                    sort_key = None
             player_dict = {
                 "name": p.name,
                 "is_folded": is_folded,
@@ -388,6 +436,7 @@ class GameManager:
                 "net_profit": winners.get(p.name, 0) - p.total_bet,
                 "best_five": best_five,
                 "hand_description": hand_description,
+                "hole_cards": [c.short_str for c in p.hole_cards] if p.hole_cards else [],
             }
             entries.append((player_dict, sort_key))
 
@@ -553,11 +602,11 @@ def register_events(app: Flask) -> None:
         _game_manager.create_game(
             player_name=data.get("player_name", "Player"),
             bot_configs=data.get("bots", [
-                {"style": "TAG", "name": "曹操"},
-                {"style": "LAG", "name": "刘备"},
-                {"style": "NIT", "name": "孙权"},
-                {"style": "CALLING_STATION", "name": "诸葛"},
-                {"style": "MANIAC", "name": "吕布"},
+                {"style": "COOL", "name": "偏冷"},
+                {"style": "WARM", "name": "偏热"},
+                {"style": "COLD", "name": "极冷"},
+                {"style": "HOT", "name": "炎热"},
+                {"style": "CHAOS", "name": "混沌"},
             ]),
             starting_chips=data.get("starting_chips", 1000),
             small_blind=data.get("small_blind", 5),

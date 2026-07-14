@@ -12,10 +12,17 @@ venv/
 env/
 
 # IDE
+.cursor/
+.agents/
+.claude/
 .vscode/
 .idea/
 *.swp
 *.swo
+
+# Agent / Claude Code 本地配置
+CLAUDE.md
+skills-lock.json
 
 # OS
 .DS_Store
@@ -27,6 +34,10 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# RLCard model artifacts
+models/rlcard/*.pth
+models/rlcard/*.tar
 
 # pytest
 .pytest_cache/

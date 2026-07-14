@@ -9,27 +9,76 @@
 from __future__ import annotations
 
 import itertools
+import json
 import logging
+import os
 import random
 from typing import Dict, List, Optional, Tuple
 
 from src.engine.card import Card, Cards
 from src.engine.hand import HandEvaluator, HandResult
+from src.utils._card_helpers import all_cards, random_hand, detect_draws
 from src.utils.constants import ActionType, GamePhase, Rank, Suit
 
 logger = logging.getLogger(__name__)
 
 
 # ================================================================
-# 翻牌前手牌胜率表 —— 模块加载时一次性预计算
+# 翻牌前手牌胜率表 —— 文件缓存 + 按需预计算
 # ================================================================
+
+_EQUITY_CACHE_FILE = os.path.join(os.path.dirname(__file__), "preflop_equity.json")
+
+
+def _key_to_str(key: Tuple[int, int, bool]) -> str:
+    """将 (high, low, suited) 元组编码为 JSON 可用的字符串键。"""
+    high, low, suited = key
+    return f"{high},{low},{'1' if suited else '0'}"
+
+
+def _str_to_key(s: str) -> Tuple[int, int, bool]:
+    """从字符串键还原 (high, low, suited)。"""
+    parts = s.split(",")
+    return int(parts[0]), int(parts[1]), parts[2] == "1"
+
+
+def _load_equity_table() -> Dict[Tuple[int, int, bool], float] | None:
+    """从缓存文件加载胜率表，不存在或损坏时返回 None。"""
+    if not os.path.isfile(_EQUITY_CACHE_FILE):
+        return None
+    try:
+        with open(_EQUITY_CACHE_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        table = {_str_to_key(k): v for k, v in raw.items()}
+        logger.info("加载翻牌前胜率表缓存：%d 种手牌", len(table))
+        return table
+    except Exception:
+        logger.warning("胜率表缓存文件损坏，将重新计算")
+        return None
+
+
+def _save_equity_table(table: Dict[Tuple[int, int, bool], float]) -> None:
+    """将胜率表保存到缓存文件。"""
+    raw = {_key_to_str(k): v for k, v in table.items()}
+    try:
+        with open(_EQUITY_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(raw, f, ensure_ascii=False)
+        logger.info("翻牌前胜率表已缓存至 %s", _EQUITY_CACHE_FILE)
+    except OSError as e:
+        logger.warning("胜率表缓存写入失败：%s", e)
+
 
 def _build_preflop_equity_table() -> Dict[Tuple[int, int, bool], float]:
     """构建 169 种起手牌的翻牌前胜率表（vs 1 个随机对手）。
 
     使用 Treys 加速的 Monte Carlo 模拟，每种手牌 500 次模拟。
-    模块加载时执行一次，O(169 × 500) ≈ 84,500 次评估。
+    计算结果会缓存到 JSON 文件，后续启动直接读取。
     """
+    # 先尝试读取缓存
+    cached = _load_equity_table()
+    if cached is not None:
+        return cached
+
     ranks = list(Rank)
     rng = random.Random(42)
     num_sim = 500
@@ -61,6 +110,10 @@ def _build_preflop_equity_table() -> Dict[Tuple[int, int, bool], float]:
                 table[key_suited] = _simulate_equity(hand_suited, rng, num_sim)
 
     logger.info("翻牌前胜率表构建完成：%d 种手牌", len(table))
+
+    # 写入缓存
+    _save_equity_table(table)
+
     return table
 
 
@@ -72,7 +125,7 @@ def _simulate_equity(
     """模拟一手牌 vs 随机对手 + 随机公共牌的胜率。"""
     wins = 0.0
     for _ in range(num_sim):
-        opponent = _random_hand(hand, rng)
+        opponent = random_hand(rng, hand)
         sim_community = _random_community(hand + opponent, rng)
         result_a = HandEvaluator.evaluate(hand + sim_community)
         result_b = HandEvaluator.evaluate(opponent + sim_community)
@@ -81,17 +134,6 @@ def _simulate_equity(
         elif result_a == result_b:
             wins += 0.5
     return round(wins / num_sim * 100.0, 1)
-
-
-def _random_hand(exclude: List[Card], rng: random.Random) -> List[Card]:
-    """从排除指定牌后的牌堆中随机抽取 2 张作为对手手牌。"""
-    excluded = {c.short_str for c in exclude}
-    available = [
-        Card(rank=r, suit=s)
-        for r, s in itertools.product(Rank, Suit)
-        if Card(rank=r, suit=s).short_str not in excluded
-    ]
-    return rng.sample(available, 2)
 
 
 def _random_community(exclude: List[Card], rng: random.Random) -> List[Card]:
@@ -220,27 +262,7 @@ def has_draw(hole_cards: Cards, community_cards: Cards) -> Tuple[bool, bool]:
     """
     if len(community_cards) < 3:
         return False, False
-
-    all_cards = hole_cards + community_cards
-
-    # 同花听牌：同花色 >= 4 张
-    suit_counts: Dict[Suit, int] = {}
-    for c in all_cards:
-        suit_counts[c.suit] = suit_counts.get(c.suit, 0) + 1
-    flush_draw = any(count == 4 for count in suit_counts.values())
-
-    # 顺子听牌：检查是否有 4 张连续的 rank
-    ranks = sorted(set(c.rank.value for c in all_cards))
-    straight_draw = False
-    for i in range(len(ranks) - 3):
-        if ranks[i + 3] - ranks[i] <= 4:
-            straight_draw = True
-            break
-    # 检查 Ace-low wrap
-    if 14 in ranks and {2, 3, 4}.issubset(set(ranks)):
-        straight_draw = True
-
-    return flush_draw, straight_draw
+    return detect_draws(hole_cards, community_cards)
 
 
 # ================================================================
@@ -261,13 +283,17 @@ def calculate_pot_odds(call_amount: int, pot_total: int) -> float:
 def position_value(seat: int, dealer_seat: int, num_players: int) -> float:
     """计算位置价值（0.0–1.0，越高越好）。
 
-    庄位 = 1.0, 枪口位 ≈ 0.3。
+    BTN = 1.0（翻牌后最后行动）, UTG ≈ 0.0（翻牌后最先行动）。
+    单挑时非庄位返回 0.5。
     """
     relative_pos = (seat - dealer_seat) % num_players
+    if num_players <= 2:
+        return 0.5 if relative_pos != 0 else 1.0
     if relative_pos == 0:
-        return 0.0
-    pos_val = relative_pos / num_players
-    return round(1.0 - pos_val, 2)
+        return 1.0  # BTN = 最佳位置
+    # relative_pos 越大 → 越晚行动 → 位置越好
+    # relative_pos=1 = UTG（最差）, relative_pos=N-1 = CO（最佳，仅次于 BTN）
+    return round((relative_pos - 1) / (num_players - 2), 2)
 
 
 # ================================================================

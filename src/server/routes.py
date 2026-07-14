@@ -48,11 +48,11 @@ def register_routes(app: Flask) -> None:
         data = request.get_json() or {}
         player_name = data.get("player_name", "Player")
         bot_configs = data.get("bots", [
-            {"style": "TAG", "name": "曹操"},
-            {"style": "LAG", "name": "刘备"},
-            {"style": "NIT", "name": "孙权"},
-            {"style": "CALLING_STATION", "name": "诸葛"},
-            {"style": "MANIAC", "name": "吕布"},
+            {"style": "COOL", "name": "偏冷"},
+            {"style": "WARM", "name": "偏热"},
+            {"style": "COLD", "name": "极冷"},
+            {"style": "HOT", "name": "炎热"},
+            {"style": "CHAOS", "name": "混沌"},
         ])
         starting_chips = data.get("starting_chips", 1000)
         small_blind = data.get("small_blind", 5)
@@ -60,15 +60,18 @@ def register_routes(app: Flask) -> None:
         ante = data.get("ante", 0)
         betting_structure = data.get("betting_structure", "no_limit")
 
-        mgr.create_game(
-            player_name=player_name,
-            bot_configs=bot_configs,
-            starting_chips=starting_chips,
-            small_blind=small_blind,
-            big_blind=big_blind,
-            ante=ante,
-            betting_structure=betting_structure,
-        )
+        try:
+            mgr.create_game(
+                player_name=player_name,
+                bot_configs=bot_configs,
+                starting_chips=starting_chips,
+                small_blind=small_blind,
+                big_blind=big_blind,
+                ante=ante,
+                betting_structure=betting_structure,
+            )
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
 
         return jsonify({"status": "ok", "message": "游戏已创建"})
 
@@ -219,8 +222,18 @@ def register_routes(app: Flask) -> None:
                 "style": p.style.value,
                 "display_name": p.display_name,
                 "description": p.description,
-                "aggression": p.aggression,
-                "bluff_frequency": p.bluff_frequency,
+                "temperature": p.temperature,
             }
             for p in profiles
         ])
+
+    @app.route("/api/capabilities")
+    def capabilities():
+        """上报可选能力是否可用。"""
+        from src.rlcard import is_available as rlcard_available
+        import importlib.util as _util
+        llm_available = _util.find_spec("anthropic") is not None or _util.find_spec("openai") is not None
+        return jsonify({
+            "rlcard": rlcard_available(),
+            "llm": llm_available,
+        })

@@ -14,6 +14,9 @@ import sys
 
 def run_server(host: str = "0.0.0.0", port: int = 5000, debug: bool = False) -> None:
     """启动 Flask + SocketIO Web 服务器。"""
+    from src.llm.client import configure_llm_traffic_logging
+
+    configure_llm_traffic_logging(enabled=True)
     from src.server.app import create_app
 
     app = create_app()
@@ -30,13 +33,16 @@ def run_server(host: str = "0.0.0.0", port: int = 5000, debug: bool = False) -> 
 
 def run_cli(num_hands: int = 10) -> None:
     """命令行模式：AI 机器人自动对战 N 手牌。"""
+    from src.llm.client import configure_llm_traffic_logging
+
+    configure_llm_traffic_logging(enabled=True)
     from src.engine.game import Action, ActionType, GameState
     from src.engine.player import Player
     from src.ai.bots import BotFactory, BotStyle
 
     styles = [
-        BotStyle.TAG, BotStyle.LAG, BotStyle.NIT,
-        BotStyle.CALLING_STATION, BotStyle.MANIAC, BotStyle.SHARK,
+        BotStyle.COOL, BotStyle.WARM, BotStyle.COLD,
+        BotStyle.HOT, BotStyle.CHAOS, BotStyle.BALANCED,
     ]
     bots = [BotFactory.create(s, name=s.value, seed=i * 100) for i, s in enumerate(styles)]
     players = [

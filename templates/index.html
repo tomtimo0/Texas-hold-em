@@ -54,10 +54,10 @@
                     <span id="action-to-call"></span>
                 </div>
                 <div id="action-buttons">
-                    <button id="btn-fold" class="btn btn-action btn-danger" disabled>Fold</button>
-                    <button id="btn-check" class="btn btn-action" disabled>Check</button>
-                    <button id="btn-call" class="btn btn-action btn-primary" disabled>Call</button>
-                    <button id="btn-raise" class="btn btn-action btn-warning" disabled>Raise</button>
+                    <button id="btn-fold" class="btn btn-action btn-danger" disabled>弃牌</button>
+                    <button id="btn-check" class="btn btn-action" disabled>过牌</button>
+                    <button id="btn-call" class="btn btn-action btn-primary" disabled>跟注</button>
+                    <button id="btn-raise" class="btn btn-action btn-warning" disabled>加注</button>
                 </div>
                 <div id="bet-controls" style="display:none;">
                     <input type="range" id="bet-slider" min="0" max="1000" value="0" step="1">
@@ -78,28 +78,41 @@
 
             <!-- 战局分析面板 -->
             <div id="panel-analysis" class="tab-content active">
-                <div id="hand-strength-display">
-                    <h3>手牌强度</h3>
-                    <div id="hand-strength-bar">
-                        <div id="hand-strength-fill"></div>
-                    </div>
-                    <span id="hand-strength-label">--</span>
+                <!-- 区域1: 牌型概率 -->
+                <div id="analysis-hand-type" class="analysis-section">
+                    <h3>
+                        牌型概率
+                        <span id="draw-phase-label" class="phase-label"></span>
+                        <span class="info-icon" data-tip="蒙特卡洛模拟方法：随机补全未知公共牌 m 次，统计每种最终牌型的出现频率。<br><br>数学公式:<br><i>P(牌型) = count(该牌型) / m</i><br><br>m = 2000">?</span>
+                    </h3>
+                    <div id="hand-type-probs"></div>
                 </div>
-                <div id="pot-odds-display">
-                    <h3>底池赔率</h3>
-                    <div id="pot-odds-info">
-                        <div><span>底池:</span><span id="ao-pot">$0</span></div>
-                        <div><span>跟注:</span><span id="ao-to-call">$0</span></div>
-                        <div><span>赔率比:</span><span id="ao-ratio">--</span></div>
-                        <div><span>所需胜率:</span><span id="ao-required">0%</span></div>
-                    </div>
+
+                <!-- 区域2: 排名分布律 -->
+                <div id="analysis-ranking" class="analysis-section">
+                    <h3>
+                        排名分布律
+                        <span class="info-icon" data-tip="在对阵 N 个对手时，你的手牌排名位置的概率分布。<br><br>每次模拟：随机给对手发手牌 + 补全公共牌，评估所有玩家手牌后确定你的排名。<br><br>数学公式:<br><i>P(rank=k) = count(你排第 k 名) / m</i><br><br>P(rank=1) 即为胜率：你是唯一最好手牌的概率。<br><br>m = 2000">?</span>
+                    </h3>
+                    <div id="ranking-distribution"></div>
                 </div>
-                <div id="draw-info-display">
-                    <h3>听牌</h3>
-                    <div id="draw-info">
-                        <span id="draw-flush">同花听牌: --</span>
-                        <span id="draw-straight">顺子听牌: --</span>
-                    </div>
+
+                <!-- 区域3: 赔率与期望值 -->
+                <div id="analysis-odds-ev" class="analysis-section">
+                    <h3>
+                        赔率与期望值
+                        <span class="info-icon" data-tip="基于蒙特卡洛胜率的综合决策指标：<br><br>底池赔率 = (底池 + 跟注额) / 跟注额<br>所需胜率 = 跟注额 / (底池 + 跟注额) × 100%<br>EV = P(win) × 底池 - P(lose) × 跟注额<br><br>EV > 0 表示长期有利，EV < 0 表示长期亏损。<br>无需跟注时不显示 EV，改为显示底池权益。">?</span>
+                    </h3>
+                    <div id="odds-ev-display"></div>
+                </div>
+
+                <!-- 区域4: 底池详情 -->
+                <div id="analysis-pot" class="analysis-section">
+                    <h3>
+                        底池详情
+                        <span class="info-icon" data-tip="当前牌局的财务概览：<br><br>底池总额 = 所有玩家本手牌的投入总和<br>死钱 = 已弃牌玩家投入的无法收回的筹码<br>沉没成本 = 你本手牌已投入的总筹码（含盲注）<br>跟注金额 = 匹配当前最高下注所需的筹码差额<br><br>沉没成本不应影响未来的决策（沉没成本谬误）。">?</span>
+                    </h3>
+                    <div id="pot-financials"></div>
                 </div>
             </div>
 
@@ -112,27 +125,14 @@
                 <div id="history-list"></div>
                 <!-- 回放控件（回放模式时显示） -->
                 <div id="replay-controls" class="replay-controls">
-                    <div class="replay-controls-header">
-                        <span id="replay-step-counter">0 / 0</span>
-                        <select id="replay-speed">
-                            <option value="1600">0.25x</option>
-                            <option value="800">0.5x</option>
-                            <option value="400" selected>1x</option>
-                            <option value="200">2x</option>
-                        </select>
-                    </div>
-                    <div id="replay-progress-container">
-                        <div id="replay-progress-bar">
-                            <div id="replay-progress-fill"></div>
-                        </div>
-                    </div>
                     <div id="replay-action-info"></div>
                     <div class="replay-buttons">
-                        <button id="btn-replay-prev" class="btn btn-sm">◀</button>
-                        <button id="btn-replay-play" class="btn btn-primary btn-sm">▶ 播放</button>
-                        <button id="btn-replay-next" class="btn btn-sm">▶</button>
-                        <button id="btn-replay-reset" class="btn btn-sm">↺</button>
+                        <button id="btn-replay-prev" class="btn btn-sm">◀ 上一步</button>
                         <button id="btn-replay-exit" class="btn btn-sm btn-danger">退出回放</button>
+                        <button id="btn-replay-next" class="btn btn-sm">下一步 ▶</button>
+                    </div>
+                    <div class="replay-step-indicator">
+                        <span id="replay-step-counter">0 / 0</span>
                     </div>
                 </div>
             </div>
@@ -161,7 +161,18 @@
     <!-- ====== LLM 设置弹窗 ====== -->
     <div id="modal-settings" class="modal" style="display:none;">
         <div class="modal-content settings-content">
-            <h2>⚙️ LLM 编排设置</h2>
+            <h2>⚙️ 游戏设置</h2>
+
+            <!-- 牌组皮肤 -->
+            <fieldset class="settings-section">
+                <legend>🃏 牌组皮肤</legend>
+                <div class="form-row deck-skin-row">
+                    <label>当前牌组</label>
+                    <span id="deck-skin-label" class="deck-skin-current">经典 PNG</span>
+                    <button type="button" id="btn-cycle-deck" class="btn btn-sm">切换牌组</button>
+                </div>
+                <p class="form-hint">立即生效，偏好保存在浏览器本地。</p>
+            </fieldset>
 
             <!-- 主力模型 -->
             <fieldset class="settings-section">
@@ -311,13 +322,15 @@
             <div id="result-body"></div>
             <div class="result-buttons">
                 <button id="btn-replay-from-result" class="btn btn-sm">回放本局</button>
-                <button id="btn-close-result" class="btn btn-sm btn-primary">继续游戏</button>
+                <button id="btn-continue-from-result" class="btn btn-sm btn-primary">继续下一局</button>
+                <button id="btn-end-from-result" class="btn btn-sm btn-danger">结束游戏</button>
             </div>
         </div>
     </div>
 
     <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
     <script src="/static/js/app.js"></script>
+    <script src="/static/js/deck.js"></script>
     <script src="/static/js/table.js"></script>
     <script src="/static/js/controls.js"></script>
     <script src="/static/js/settings.js"></script>
